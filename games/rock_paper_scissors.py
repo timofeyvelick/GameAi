@@ -1,5 +1,10 @@
 # games/rock_paper_scissors.py
 # Игра «Камень-ножницы-бумага» с ИИ-соперником.
+#
+# ВАЖНО про импорты: keyboards.py импортирует games/__init__.py,
+# а games/__init__.py импортирует этот файл. Если импортировать keyboards
+# на верхнем уровне — получится циклический импорт.
+# Поэтому keyboards и database импортируются ЛОКАЛЬНО внутри функций.
 
 import logging
 import random
@@ -9,54 +14,58 @@ from aiogram.types import CallbackQuery
 
 from ai import ask_ai_json, AIError
 from database import record_result
-from keyboards import rps_kb, next_round_kb, back_to_menu_kb
 
 logger = logging.getLogger(__name__)
 
 router = Router(name="rps")
 
 GAME_ID = "rock_paper_scissors"
-WINS_NEEDED = 3  # до 3 побед
+WINS_NEEDED = 3
 
-# Соответствие ходов и то, что они бьют
 BEATS = {"rock": "scissors", "scissors": "paper", "paper": "rock"}
 MOVES_RU = {"rock": "камень 🪨", "scissors": "ножницы ✂️", "paper": "бумага 📄"}
 
-# Характеры соперника. Один выбирается при старте партии.
 PERSONAS = [
     {
         "name": "Злопамятный Гоблин",
-        "trait": "ты злопамятный и мстительный. Если игрок тебя обыграл, "
-                 "ты обязательно упомянешь это в следующем комментарии. "
-                 "Любишь считать, сколько раз ты проиграл.",
+        "trait": (
+            "ты злопамятный и мстительный. Если игрок тебя обыграл, "
+            "ты обязательно упомянешь это в следующем комментарии. "
+            "Любишь считать, сколько раз ты проиграл."
+        ),
     },
     {
         "name": "Блефующий Барон",
-        "trait": "ты блефуешь и запугиваешь. Говоришь, что видишь мысли игрока, "
-                 "что следующий ход будет решающим, что у тебя есть тайная стратегия.",
+        "trait": (
+            "ты блефуешь и запугиваешь. Говоришь, что видишь мысли игрока, "
+            "что следующий ход будет решающим, что у тебя есть тайная стратегия."
+        ),
     },
     {
         "name": "Ироничный Сфинкс",
-        "trait": "ты ироничный и сдержанно-насмешливый. Комментируешь ходы игрока "
-                 "с лёгкой издёвкой, будто тебе всё равно, но ты явно наслаждаешься процессом.",
+        "trait": (
+            "ты ироничный и сдержанно-насмешливый. Комментируешь ходы игрока "
+            "с лёгкой издёвкой, будто тебе всё равно, но ты явно наслаждаешься процессом."
+        ),
     },
 ]
 
 
 def who_wins(player: str, ai: str) -> str:
-    """'player' | 'ai' | 'draw'"""
+    """Возвращает 'player' | 'ai' | 'draw'."""
     if player == ai:
         return "draw"
     return "player" if BEATS[player] == ai else "ai"
 
 
-async def ai_pick_move(persona: dict, history: list[tuple[str, str]], score: dict) -> dict:
+async def ai_pick_move(persona: dict, history: list, score: dict) -> dict:
     """
-    Спросить у ИИ ход и комментарий. History — список (ход игрока, ход ИИ).
-    Возвращаем {'move': ..., 'comment': ...}. Если ИИ упал — фолбэк на random.choice.
+    Спросить у ИИ ход и комментарий.
+    history — список кортежей (ход игрока, ход ИИ).
+    Возвращает {'move': ..., 'comment': ...}. Если ИИ упал — fallback на random.
     """
     history_text = "\n".join(
-        f"  раунд {i+1}: игрок — {MOVES_RU[p]}, ты — {MOVES_RU[a]} ({who_wins(p, a)})"
+        f"  раунд {i + 1}: игрок — {MOVES_RU[p]}, ты — {MOVES_RU[a]} ({who_wins(p, a)})"
         for i, (p, a) in enumerate(history)
     ) or "  (пока пусто)"
 
@@ -94,10 +103,12 @@ def persona_header(persona: dict) -> str:
 
 @router.callback_query(F.data == f"start_game:{GAME_ID}")
 async def start_rps(call: CallbackQuery) -> None:
+    # Локальные импорты — чтобы не было циклической зависимости
+    from keyboards import rps_kb
+    from database import set_session
+
     persona = random.choice(PERSONAS)
 
-    # Сохраняем сессию в БД — чтобы пережить рестарт бота
-    from database import set_session
     await set_session(call.from_user.id, GAME_ID, {
         "persona": persona,
         "history": [],
@@ -110,7 +121,9 @@ async def start_rps(call: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("rps:"))
 async def handle_move(call: CallbackQuery) -> None:
-    from database import get_session, set_session
+    # Локальные импорты
+    from keyboards import rps_kb, next_round_kb, back_to_menu_kb
+    from database import get_session, set_session, clear_session
 
     player_move = call.data.split(":", 1)[1]
     if player_move not in BEATS:
@@ -145,7 +158,6 @@ async def handle_move(call: CallbackQuery) -> None:
 
     history.append((player_move, ai_move))
 
-    # Красим итог раунда
     if result == "player":
         outcome = "🎉 Ты выиграл раунд!"
     elif result == "ai":
@@ -161,7 +173,7 @@ async def handle_move(call: CallbackQuery) -> None:
         f"Счёт: <b>{score['player']} : {score['ai']}</b> (ты : ИИ)"
     )
 
-    # Проверяем, не закончилась ли партия
+    # Финал партии
     if score["player"] >= WINS_NEEDED or score["ai"] >= WINS_NEEDED:
         if score["player"] > score["ai"]:
             final = f"🏆 <b>Ты победил {score['player']}:{score['ai']}!</b>"
@@ -172,13 +184,10 @@ async def handle_move(call: CallbackQuery) -> None:
 
         text += f"\n\n{final}"
         await call.message.edit_text(text, reply_markup=next_round_kb(GAME_ID))
-
-        # Сессию закрываем — партия закончена
-        from database import clear_session
         await clear_session(call.from_user.id)
         return
 
-    # Играем дальше
+    # Играем дальше — сохраняем состояние
     state["history"] = history
     state["score"] = score
     await set_session(call.from_user.id, GAME_ID, state)

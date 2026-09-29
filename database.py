@@ -1,7 +1,5 @@
 # database.py
 # Слой работы с SQLite. Все обращения к БД идут через этот файл.
-# Используем aiosqlite — асинхронную обёртку над стандартным sqlite3,
-# чтобы не блокировать бота на время запроса.
 
 import json
 import logging
@@ -14,14 +12,9 @@ from config import Config
 logger = logging.getLogger(__name__)
 
 
-# ============================================
-# ИНИЦИАЛИЗАЦИЯ СХЕМЫ
-# ============================================
 async def init_db() -> None:
     """Создать таблицы, если их ещё нет. Вызывается один раз при старте бота."""
     async with aiosqlite.connect(Config.DB_PATH) as db:
-        # --- Пользователи ---
-        # tg_id — уникальный ID в Telegram, именно по нему мы всё связываем.
         await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 tg_id       INTEGER PRIMARY KEY,
@@ -31,9 +24,6 @@ async def init_db() -> None:
             )
         """)
 
-        # --- Статистика по играм ---
-        # На каждого юзера + игру — одна строка. PRIMARY KEY из двух полей,
-        # чтобы не могло быть двух записей "юзер 5, игра cities".
         await db.execute("""
             CREATE TABLE IF NOT EXISTS stats (
                 tg_id       INTEGER NOT NULL,
@@ -47,9 +37,6 @@ async def init_db() -> None:
             )
         """)
 
-        # --- Активные сессии ---
-        # state_json — произвольное состояние конкретной игры (ход, счёт, загаданное слово).
-        # Храним как JSON-строку, потому что у каждой игры своё состояние.
         await db.execute("""
             CREATE TABLE IF NOT EXISTS sessions (
                 tg_id       INTEGER PRIMARY KEY,
@@ -63,9 +50,6 @@ async def init_db() -> None:
         logger.info("БД инициализирована: %s", Config.DB_PATH)
 
 
-# ============================================
-# ПОЛЬЗОВАТЕЛИ
-# ============================================
 async def get_or_create_user(tg_id: int, username: str = "", first_name: str = "") -> None:
     """Если юзера нет — создать. Если есть — обновить имя/username."""
     async with aiosqlite.connect(Config.DB_PATH) as db:
@@ -79,30 +63,23 @@ async def get_or_create_user(tg_id: int, username: str = "", first_name: str = "
         await db.commit()
 
 
-# ============================================
-# СТАТИСТИКА
-# ============================================
 async def record_result(tg_id: int, game: str, result: str) -> None:
-    """
-    Записать результат одной партии.
-    result: 'win' | 'loss' | 'draw'
-    """
+    """result: 'win' | 'loss' | 'draw'"""
     if result not in ("win", "loss", "draw"):
         raise ValueError(f"Неизвестный результат: {result}")
 
+    column = {"win": "wins", "loss": "losses", "draw": "draws"}[result]
+
     async with aiosqlite.connect(Config.DB_PATH) as db:
-        # Сначала убедимся, что строка для (tg_id, game) существует.
         await db.execute("""
             INSERT OR IGNORE INTO stats (tg_id, game) VALUES (?, ?)
         """, (tg_id, game))
 
-        # Затем увеличиваем нужный счётчик и played.
-        column = {"win": "wins", "loss": "losses", "draw": "draws"}[result]
         await db.execute(f"""
             UPDATE stats
-               SET {column}   = {column} + 1,
-                   played     = played + 1,
-                   last_played= datetime('now')
+               SET {column}    = {column} + 1,
+                   played      = played + 1,
+                   last_played = datetime('now')
              WHERE tg_id = ? AND game = ?
         """, (tg_id, game))
 
@@ -123,9 +100,6 @@ async def get_stats(tg_id: int) -> list[dict]:
             return [dict(r) for r in rows]
 
 
-# ============================================
-# СЕССИИ (одна активная на юзера)
-# ============================================
 async def set_session(tg_id: int, game: str, state: dict) -> None:
     """Сохранить (или перезаписать) состояние активной игры."""
     async with aiosqlite.connect(Config.DB_PATH) as db:
@@ -144,20 +118,17 @@ async def get_session(tg_id: int) -> Optional[dict]:
     """Вернуть {'game': ..., 'state': {...}} или None."""
     async with aiosqlite.connect(Config.DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute("""
-            SELECT game, state_json FROM sessions WHERE tg_id = ?
-        """, (tg_id,)) as cursor:
+        async with db.execute(
+            "SELECT game, state_json FROM sessions WHERE tg_id = ?", (tg_id,)
+        ) as cursor:
             row = await cursor.fetchone()
             if not row:
                 return None
-            return {
-                "game": row["game"],
-                "state": json.loads(row["state_json"]),
-            }
+            return {"game": row["game"], "state": json.loads(row["state_json"])}
 
 
 async def clear_session(tg_id: int) -> None:
-    """Удалить активную сессию (когда игра закончена или юзер нажал «Меню»)."""
+    """Удалить активную сессию."""
     async with aiosqlite.connect(Config.DB_PATH) as db:
         await db.execute("DELETE FROM sessions WHERE tg_id = ?", (tg_id,))
         await db.commit()

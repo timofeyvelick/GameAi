@@ -1,6 +1,5 @@
 # games/__init__.py
-# Реестр всех игр. Пока роутеров нет — игры просто объявлены в списке.
-# Когда напишем игру, поменяем 'router': None на реальный роутер.
+# Реестр всех игр.
 
 from dataclasses import dataclass
 from typing import Optional
@@ -9,15 +8,13 @@ from aiogram import Router
 
 @dataclass
 class GameInfo:
-    """Описание одной игры для меню."""
-    id: str           # технический id (латиницей), для callback_data
-    title: str        # название на кнопке
-    emoji: str        # эмодзи на кнопке
-    description: str  # подсказка в /help
-    router: Optional[Router] = None  # aiogram-роутер игры (заполним позже)
+    id: str
+    title: str
+    emoji: str
+    description: str
+    router: Optional[Router] = None
 
 
-# Список всех игр. Порядок = порядок кнопок в меню.
 GAMES: list[GameInfo] = [
     GameInfo("rock_paper_scissors", "Камень-ножницы-бумага", "🪨",
              "Соперник со стратегиями: злопамятный, блефующий, ироничный"),
@@ -42,5 +39,4 @@ GAMES: list[GameInfo] = [
 ]
 
 
-# Быстрый доступ по id: GAMES_BY_ID['cities'] → GameInfo
 GAMES_BY_ID: dict[str, GameInfo] = {g.id: g for g in GAMES}

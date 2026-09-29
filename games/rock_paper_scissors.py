@@ -1,10 +1,5 @@
 # games/rock_paper_scissors.py
 # Игра «Камень-ножницы-бумага» с ИИ-соперником.
-#
-# ВАЖНО про импорты: keyboards.py импортирует games/__init__.py,
-# а games/__init__.py импортирует этот файл. Если импортировать keyboards
-# на верхнем уровне — получится циклический импорт.
-# Поэтому keyboards и database импортируются ЛОКАЛЬНО внутри функций.
 
 import logging
 import random
@@ -27,25 +22,25 @@ MOVES_RU = {"rock": "камень 🪨", "scissors": "ножницы ✂️", "p
 
 PERSONAS = [
     {
-        "name": "Злопамятный Гоблин",
+        "name": "Злопамятный",
         "trait": (
-            "ты злопамятный и мстительный. Если игрок тебя обыграл, "
-            "ты обязательно упомянешь это в следующем комментарии. "
-            "Любишь считать, сколько раз ты проиграл."
+            "Ты ведёшь счёт проигрышам. Если игрок тебя обыграл — в следующем "
+            "комментарии коротко и сухо напомни об этом. Без пафоса и жалоб."
         ),
     },
     {
-        "name": "Блефующий Барон",
+        "name": "Блефующий",
         "trait": (
-            "ты блефуешь и запугиваешь. Говоришь, что видишь мысли игрока, "
-            "что следующий ход будет решающим, что у тебя есть тайная стратегия."
+            "Ты иногда намекаешь, что видишь закономерность в ходах игрока, "
+            "хотя на самом деле просто играешь. Намёки делай кратко, без "
+            "обещаний и пафоса."
         ),
     },
     {
-        "name": "Ироничный Сфинкс",
+        "name": "Ироничный",
         "trait": (
-            "ты ироничный и сдержанно-насмешливый. Комментируешь ходы игрока "
-            "с лёгкой издёвкой, будто тебе всё равно, но ты явно наслаждаешься процессом."
+            "Ты комментируешь ходы с легкой, спокойной иронией. Без издёвки "
+            "и без снисходительности. Одно-два предложения, по делу."
         ),
     },
 ]
@@ -59,11 +54,7 @@ def who_wins(player: str, ai: str) -> str:
 
 
 async def ai_pick_move(persona: dict, history: list, score: dict) -> dict:
-    """
-    Спросить у ИИ ход и комментарий.
-    history — список кортежей (ход игрока, ход ИИ).
-    Возвращает {'move': ..., 'comment': ...}. Если ИИ упал — fallback на random.
-    """
+    """Спросить у ИИ ход и короткий комментарий. При ошибке — fallback."""
     history_text = "\n".join(
         f"  раунд {i + 1}: игрок — {MOVES_RU[p]}, ты — {MOVES_RU[a]} ({who_wins(p, a)})"
         for i, (p, a) in enumerate(history)
@@ -72,22 +63,24 @@ async def ai_pick_move(persona: dict, history: list, score: dict) -> dict:
     system = (
         f"Ты играешь в «Камень-ножницы-бумага» против человека. "
         f"Твой характер: {persona['trait']} "
+        f"Комментарий — одно короткое предложение, не больше 120 символов. "
+        f"Без восклицаний, без пафоса, без эмодзи. "
         f"Отвечай СТРОГО валидным JSON без markdown-обёртки, на русском."
     )
     user = (
-        f"История партий:\n{history_text}\n\n"
-        f"Счёт (победы игрока / твои): {score['player']} / {score['ai']}\n\n"
-        f"Сделай свой ход и прокомментируй его в своём характере. "
+        f"История раундов:\n{history_text}\n\n"
+        f"Счёт (ты / игрок): {score['ai']} / {score['player']}\n\n"
+        f"Сделай ход и дай короткий комментарий в своём характере. "
         f"Ход — строго одно из: rock, scissors, paper.\n\n"
         f"Формат ответа:\n"
-        f'{{"move": "rock|scissors|paper", "comment": "короткая фраза, до 200 символов"}}'
+        f'{{"move": "rock|scissors|paper", "comment": "короткая фраза"}}'
     )
 
     try:
         data = await ask_ai_json(system, user, temperature=0.9, max_tokens=200)
         if data.get("move") not in BEATS:
             raise AIError(f"ИИ прислал недопустимый ход: {data.get('move')}")
-        return {"move": data["move"], "comment": data.get("comment", "")[:300]}
+        return {"move": data["move"], "comment": data.get("comment", "")[:200]}
     except AIError as e:
         logger.warning("RPS: ИИ упал, fallback random. %s", e)
         return {"move": random.choice(list(BEATS)), "comment": "…"}
@@ -95,15 +88,14 @@ async def ai_pick_move(persona: dict, history: list, score: dict) -> dict:
 
 def persona_header(persona: dict) -> str:
     return (
-        f"🎭 Твой соперник: <b>{persona['name']}</b>\n"
-        f"<i>Играем до {WINS_NEEDED} побед.</i>\n\n"
-        f"Твой ход?"
+        f"<b>{persona['name']}</b>\n"
+        f"До {WINS_NEEDED} побед.\n\n"
+        f"Твой ход:"
     )
 
 
 @router.callback_query(F.data == f"start_game:{GAME_ID}")
 async def start_rps(call: CallbackQuery) -> None:
-    # Локальные импорты — чтобы не было циклической зависимости
     from keyboards import rps_kb
     from database import set_session
 
@@ -121,7 +113,6 @@ async def start_rps(call: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("rps:"))
 async def handle_move(call: CallbackQuery) -> None:
-    # Локальные импорты
     from keyboards import rps_kb, next_round_kb, back_to_menu_kb
     from database import get_session, set_session, clear_session
 
@@ -159,27 +150,26 @@ async def handle_move(call: CallbackQuery) -> None:
     history.append((player_move, ai_move))
 
     if result == "player":
-        outcome = "🎉 Ты выиграл раунд!"
+        outcome = "Раунд за тобой."
     elif result == "ai":
-        outcome = "💀 ИИ выиграл раунд."
+        outcome = "Раунд за ИИ."
     else:
-        outcome = "🤝 Ничья."
+        outcome = "Ничья."
 
     text = (
         f"Ты: {MOVES_RU[player_move]}\n"
         f"ИИ: {MOVES_RU[ai_move]}\n\n"
-        f"{outcome}\n"
-        f"💬 <i>{comment}</i>\n\n"
-        f"Счёт: <b>{score['player']} : {score['ai']}</b> (ты : ИИ)"
+        f"<b>{outcome}</b>\n"
+        f"<i>{comment}</i>\n\n"
+        f"Счёт: <b>{score['player']} : {score['ai']}</b>"
     )
 
-    # Финал партии
     if score["player"] >= WINS_NEEDED or score["ai"] >= WINS_NEEDED:
         if score["player"] > score["ai"]:
-            final = f"🏆 <b>Ты победил {score['player']}:{score['ai']}!</b>"
+            final = f"<b>Ты победил {score['player']}:{score['ai']}.</b>"
             await record_result(call.from_user.id, GAME_ID, "win")
         else:
-            final = f"😈 <b>ИИ победил {score['ai']}:{score['player']}.</b>"
+            final = f"<b>ИИ победил {score['ai']}:{score['player']}.</b>"
             await record_result(call.from_user.id, GAME_ID, "loss")
 
         text += f"\n\n{final}"
@@ -187,9 +177,8 @@ async def handle_move(call: CallbackQuery) -> None:
         await clear_session(call.from_user.id)
         return
 
-    # Играем дальше — сохраняем состояние
     state["history"] = history
     state["score"] = score
     await set_session(call.from_user.id, GAME_ID, state)
 
-    await call.message.edit_text(text + "\n\nТвой ход?", reply_markup=rps_kb())
+    await call.message.edit_text(text + "\n\nТвой ход:", reply_markup=rps_kb())

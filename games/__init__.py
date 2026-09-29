@@ -40,3 +40,7 @@ GAMES: list[GameInfo] = [
 
 
 GAMES_BY_ID: dict[str, GameInfo] = {g.id: g for g in GAMES}
+
+# Подключаем роутеры реализованных игр
+from games.rock_paper_scissors import router as rps_router
+GAMES_BY_ID["rock_paper_scissors"].router = rps_router

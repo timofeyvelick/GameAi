@@ -1,5 +1,6 @@
 # games/rock_paper_scissors.py
 # Игра «Камень-ножницы-бумага» с ИИ-соперником.
+# Каждый ход — новое сообщение с реакцией ИИ, чтобы игра ощущалась живее.
 
 import logging
 import random
@@ -19,6 +20,9 @@ WINS_NEEDED = 3
 
 BEATS = {"rock": "scissors", "scissors": "paper", "paper": "rock"}
 MOVES_RU = {"rock": "камень 🪨", "scissors": "ножницы ✂️", "paper": "бумага 📄"}
+
+# Красивые символы для каждого хода — оживляют сообщение
+MOVE_BIG = {"rock": "🪨", "scissors": "✂️", "paper": "📄"}
 
 PERSONAS = [
     {
@@ -51,7 +55,6 @@ PERSONAS = [
 
 
 def who_wins(player: str, ai: str) -> str:
-    """Возвращает 'player' | 'ai' | 'draw'."""
     if player == ai:
         return "draw"
     return "player" if BEATS[player] == ai else "ai"
@@ -63,10 +66,6 @@ async def ai_pick_move(
     history: list,
     score: dict,
 ) -> dict:
-    """
-    Спросить у ИИ ход и комментарий.
-    last_player_move — ход игрока, на который ИИ сейчас реагирует (или None в самом начале).
-    """
     history_text = "\n".join(
         f"  раунд {i + 1}: игрок — {MOVES_RU[p]}, ты — {MOVES_RU[a]} ({who_wins(p, a)})"
         for i, (p, a) in enumerate(history)
@@ -75,9 +74,7 @@ async def ai_pick_move(
     if last_player_move is None:
         last_move_line = "Игрок делает первый ход в этой партии."
     else:
-        last_move_line = (
-            f"Только что игрок сыграл: {MOVES_RU[last_player_move]}."
-        )
+        last_move_line = f"Только что игрок сыграл: {MOVES_RU[last_player_move]}."
 
     system = (
         f"Ты играешь в «Камень-ножницы-бумага» против человека. "
@@ -111,7 +108,27 @@ def persona_header(persona: dict) -> str:
     return (
         f"<b>{persona['name']}</b>\n"
         f"До {WINS_NEEDED} побед.\n\n"
-        f"Твой ход:"
+        f"Сделай ход:"
+    )
+
+
+def move_result_text(player_move: str, ai_move: str, result: str, comment: str, score: dict) -> str:
+    """Яркое сообщение о раунде."""
+    p_icon = MOVE_BIG[player_move]
+    a_icon = MOVE_BIG[ai_move]
+
+    if result == "player":
+        verdict = "🎯 <b>Раунд твой.</b>"
+    elif result == "ai":
+        verdict = "⚔️ <b>Раунд за мной.</b>"
+    else:
+        verdict = "🤝 <b>Ничья.</b>"
+
+    return (
+        f"{p_icon} <b>ты</b>  ·  {a_icon} <b>я</b>\n\n"
+        f"{verdict}\n"
+        f"<i>{comment}</i>\n\n"
+        f"Счёт: <b>{score['player']} : {score['ai']}</b>"
     )
 
 
@@ -121,14 +138,12 @@ async def start_rps(call: CallbackQuery) -> None:
     from database import set_session
 
     persona = random.choice(PERSONAS)
-
     await set_session(call.from_user.id, GAME_ID, {
         "persona": persona,
         "history": [],
         "score": {"player": 0, "ai": 0},
         "last_player_move": None,
     })
-
     await call.message.edit_text(persona_header(persona), reply_markup=rps_kb())
     await call.answer()
 
@@ -172,38 +187,32 @@ async def handle_move(call: CallbackQuery) -> None:
 
     history.append((player_move, ai_move))
 
-    if result == "player":
-        outcome = "Раунд за тобой."
-    elif result == "ai":
-        outcome = "Раунд за ИИ."
-    else:
-        outcome = "Ничья."
-
-    text = (
-        f"Ты: {MOVES_RU[player_move]}\n"
-        f"ИИ: {MOVES_RU[ai_move]}\n\n"
-        f"<b>{outcome}</b>\n"
-        f"<i>{comment}</i>\n\n"
-        f"Счёт: <b>{score['player']} : {score['ai']}</b>"
+    # НОВОЕ: ответ приходит НОВЫМ сообщением, а не редактирует старое
+    await call.message.answer(
+        move_result_text(player_move, ai_move, result, comment, score),
+        reply_markup=rps_kb(),
     )
 
+    # Старое сообщение оставляем в истории чата — просто убираем кнопки
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
+    # Финал партии
     if score["player"] >= WINS_NEEDED or score["ai"] >= WINS_NEEDED:
         if score["player"] > score["ai"]:
-            final = f"<b>Ты победил {score['player']}:{score['ai']}.</b>"
+            final = f"🏆 <b>Победа — {score['player']}:{score['ai']}.</b>"
             await record_result(call.from_user.id, GAME_ID, "win")
         else:
-            final = f"<b>ИИ победил {score['ai']}:{score['player']}.</b>"
+            final = f"💀 <b>Меня не обойти — {score['ai']}:{score['player']}.</b>"
             await record_result(call.from_user.id, GAME_ID, "loss")
 
-        text += f"\n\n{final}"
-        await call.message.edit_text(text, reply_markup=next_round_kb(GAME_ID))
+        await call.message.answer(final, reply_markup=next_round_kb(GAME_ID))
         await clear_session(call.from_user.id)
         return
 
-    # Сохраняем состояние, включая последний ход игрока для следующего раунда
     state["history"] = history
     state["score"] = score
     state["last_player_move"] = player_move
     await set_session(call.from_user.id, GAME_ID, state)
-
-    await call.message.edit_text(text + "\n\nТвой ход:", reply_markup=rps_kb())

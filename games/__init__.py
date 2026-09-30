@@ -47,3 +47,6 @@ GAMES_BY_ID["rock_paper_scissors"].router = rps_router
 
 from games.mine_number import router as mine_router
 GAMES_BY_ID["mine_number"].router = mine_router
+
+from games.antonyms import router as antonyms_router
+GAMES_BY_ID["antonyms"].router = antonyms_router

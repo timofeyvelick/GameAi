@@ -1,6 +1,6 @@
 # games/antonyms.py
-# Игра «Антонимы»: ИИ даёт слово, игрок пишет максимально не связанное.
-# ИИ оценивает антисвязность от 0 до 10.
+# Игра «Антонимы»: ИИ даёт слово, игрок подбирает настоящий антоним.
+# ИИ проверяет: правильный антоним или нет.
 
 import logging
 import random
@@ -23,91 +23,105 @@ PERSONAS = [
     {
         "name": "Строгий",
         "trait": (
-            "Ты оцениваешь строго и без скидок. Если слова хоть как-то "
-            "пересекаются по смыслу, категории или контексту — снижай балл. "
-            "Комментарий короткий, по делу."
+            "Ты строгий ведущий. Засчитываешь только точные антонимы. "
+            "Если слово — не антоним, а просто связанное или синоним — "
+            "честно говоришь, что не засчитано, и коротко объясняешь почему."
+        ),
+    },
+    {
+        "name": "Дружелюбный",
+        "trait": (
+            "Ты дружелюбный ведущий. Засчитываешь точные антонимы, а если "
+            "игрок ошибся — мягко поправляешь и подсказываешь правильный вариант."
         ),
     },
     {
         "name": "Ироничный",
         "trait": (
-            "Ты комментируешь с лёгкой иронией, но оценку ставишь честно. "
-            "Если игрок придумал банальное слово — подколи, но не грубо. "
-            "Если красиво — коротко похвали."
-        ),
-    },
-    {
-        "name": "Щедрый",
-        "trait": (
-            "Ты склонен засчитывать неожиданные ассоциации и давать балл выше, "
-            "если слово действительно уводит в другую категорию. "
-            "Комментарий доброжелательный, короткий."
+            "Ты с лёгкой иронией. Засчитываешь правильные ответы, но не "
+            "упускаешь случая подколоть за промах — коротко и без грубости."
         ),
     },
 ]
 
 
-async def ai_new_word(persona: dict, used: list) -> str:
-    """Попросить у ИИ стартовое слово. Если упал — берём из локального списка."""
+async def ai_new_word(persona: dict, used: list) -> dict:
+    """
+    Попросить у ИИ слово и его правильный антоним (эталон).
+    Возвращаем {'word': 'тёплый', 'antonym': 'холодный'}.
+    """
     system = (
         "Ты ведущий игры «Антонимы». Отвечай СТРОГО валидным JSON без "
         "markdown-обёртки, на русском."
     )
     user = (
-        f"Придумай одно нарицательное существительное на русском — "
-        f"конкретное, понятное (не абстрактное). Одно слово. "
+        f"Придумай одно прилагательное или наречие на русском, у которого "
+        f"есть общепризнанный антоним (например: тёплый→холодный, "
+        f"быстро→медленно, высокий→низкий). "
         f"Не используй слова: {', '.join(used) if used else '—'}.\n\n"
-        f'Формат: {{"word": "твоё_слово"}}'
+        f'Формат: {{"word": "тёплый", "antonym": "холодный"}}'
     )
     try:
-        data = await ask_ai_json(system, user, temperature=0.9, max_tokens=60)
+        data = await ask_ai_json(system, user, temperature=0.8, max_tokens=80)
         word = str(data.get("word", "")).strip().lower()
-        if not word or word in used:
+        antonym = str(data.get("antonym", "")).strip().lower()
+        if not word or not antonym or word in used:
             raise AIError("ИИ вернул пустое или повторяющееся слово")
-        return word
+        return {"word": word, "antonym": antonym}
     except AIError as e:
         logger.warning("ANTONYMS: ИИ упал на новом слове, fallback. %s", e)
-        pool = ["море", "стол", "лампа", "город", "книга", "зонт", "лёд", "поле"]
-        return random.choice([w for w in pool if w not in used] or pool)
+        pool = [
+            {"word": "тёплый", "antonym": "холодный"},
+            {"word": "быстро", "antonym": "медленно"},
+            {"word": "высокий", "antonym": "низкий"},
+            {"word": "день", "antonym": "ночь"},
+            {"word": "добрый", "antonym": "злой"},
+            {"word": "светлый", "antonym": "тёмный"},
+        ]
+        return random.choice([p for p in pool if p["word"] not in used] or pool)
 
 
-async def ai_score(persona: dict, base: str, answer: str) -> dict:
+async def ai_check(persona: dict, base: str, antonym: str, answer: str) -> dict:
     """
-    Оценить антисвязность от 0 до 10 + короткий комментарий.
-    Формат ответа: {'score': int, 'comment': str}
+    Проверить, является ли ответ антонимом слова.
+    Возвращаем {'correct': bool, 'comment': str}.
     """
     system = (
-        f"Ты оцениваешь антисвязность пары слов в игре «Антонимы». "
+        f"Ты проверяешь ответ в игре «Антонимы». "
         f"Твой характер: {persona['trait']} "
-        f"Оценка — целое число от 0 до 10 (0 — слова связаны, 10 — максимально "
-        f"далеко друг от друга). Комментарий — 1 короткое предложение, "
-        f"до 120 символов, без эмодзи. "
+        f"Комментарий — 1 короткое предложение, до 120 символов, без эмодзи. "
         f"Отвечай СТРОГО валидным JSON без markdown-обёртки, на русском."
     )
     user = (
-        f"Исходное слово: «{base}».\n"
+        f"Слово: «{base}».\n"
+        f"Эталонный антоним: «{antonym}».\n"
         f"Ответ игрока: «{answer}».\n\n"
-        f"Насколько слова далеки друг от друга по смыслу, категории, контексту? "
-        f"Оцени от 0 до 10 и дай короткий комментарий в своём характере.\n\n"
-        f'Формат: {{"score": 7, "comment": "короткая фраза"}}'
+        f"Считается ли ответ правильным антонимом? Учти синонимы и близкие "
+        f"варианты (например «холодный» и «студёный» — оба верны для «тёплого»). "
+        f"Если игрок написал синоним исходного слова или просто связанное — "
+        f"не засчитывай.\n\n"
+        f'Формат: {{"correct": true, "comment": "короткая фраза"}}'
     )
     try:
-        data = await ask_ai_json(system, user, temperature=0.7, max_tokens=150)
-        score = int(data.get("score", 0))
-        score = max(0, min(10, score))
+        data = await ask_ai_json(system, user, temperature=0.5, max_tokens=150)
+        correct = bool(data.get("correct", False))
         comment = str(data.get("comment", "")).strip()[:160]
-        return {"score": score, "comment": comment or "…"}
+        return {"correct": correct, "comment": comment or "…"}
     except AIError as e:
-        logger.warning("ANTONYMS: ИИ упал на оценке, fallback. %s", e)
-        return {"score": 5, "comment": "Оценка недоступна."}
+        logger.warning("ANTONYMS: ИИ упал на проверке, fallback. %s", e)
+        # Простой фолбэк: точное совпадение с эталоном
+        return {
+            "correct": answer.strip().lower() == antonym,
+            "comment": "Проверка недоступна, зачёл по точному совпадению.",
+        }
 
 
-def header_text(persona: dict, base: str, round_no: int) -> str:
+def header_text(persona: dict, word: str, round_no: int) -> str:
     return (
         f"<b>Антонимы</b> · ведущий: {persona['name']}\n"
         f"Раунд {round_no} / {ROUNDS}\n\n"
-        f"Слово: <b>{base}</b>\n"
-        f"Напиши максимально не связанное слово."
+        f"Слово: <b>{word}</b>\n"
+        f"Напиши антоним — слово с противоположным значением."
     )
 
 
@@ -117,20 +131,21 @@ async def start_antonyms(call: CallbackQuery, state: FSMContext) -> None:
     from database import set_session
 
     persona = random.choice(PERSONAS)
-    base = await ai_new_word(persona, [])
+    pair = await ai_new_word(persona, [])
 
     await set_session(call.from_user.id, GAME_ID, {
         "persona": persona,
         "round": 1,
-        "total": 0,
-        "used_base": [base],
-        "base": base,
+        "score": 0,
+        "used_words": [pair["word"]],
+        "word": pair["word"],
+        "antonym": pair["antonym"],
     })
 
     await state.set_state(AntonymsStates.waiting_word)
 
     await call.message.edit_text(
-        header_text(persona, base, 1),
+        header_text(persona, pair["word"], 1),
         reply_markup=back_to_menu_kb(),
     )
     await call.answer()
@@ -144,8 +159,8 @@ async def handle_answer(message: Message, state: FSMContext) -> None:
     answer = (message.text or "").strip().lower()
     if not answer:
         return
-    if len(answer) > 50:
-        await message.answer("Слишком длинно. Одно слово, до 50 символов.")
+    if len(answer) > 40:
+        await message.answer("Слишком длинно. Одно слово, до 40 символов.")
         return
 
     sess = await get_session(message.from_user.id)
@@ -159,32 +174,36 @@ async def handle_answer(message: Message, state: FSMContext) -> None:
 
     st = sess["state"]
     persona = st["persona"]
-    base = st["base"]
+    word = st["word"]
+    antonym = st["antonym"]
     round_no = st["round"]
-    total = st["total"]
-    used_base = st["used_base"]
+    score = st["score"]
+    used_words = st["used_words"]
 
-    await message.answer("Оцениваю…")
-    result = await ai_score(persona, base, answer)
-    score = result["score"]
+    await message.answer("Проверяю…")
+    result = await ai_check(persona, word, antonym, answer)
+    correct = result["correct"]
     comment = result["comment"]
-    total += score
+    if correct:
+        score += 1
 
+    mark = "✅" if correct else "❌"
     text = (
-        f"«{base}» ↔ «{answer}»\n\n"
-        f"<b>{score} / 10</b>\n"
-        f"<i>{comment}</i>\n\n"
-        f"Всего: <b>{total}</b>"
+        f"«{word}» → «{answer}»\n\n"
+        f"{mark} <b>{'Засчитано' if correct else 'Не засчитано'}</b>\n"
+        f"<i>{comment}</i>\n"
     )
+    if not correct:
+        text += f"\nЭталонный антоним: <b>{antonym}</b>"
 
     # Финал партии
     if round_no >= ROUNDS:
         await clear_session(message.from_user.id)
         await state.clear()
-        if total >= 31:
+        if score >= 4:
             medal = "🏆 Отличный результат."
             await record_result(message.from_user.id, GAME_ID, "win")
-        elif total >= 15:
+        elif score >= 2:
             medal = "👍 Средний результат."
             await record_result(message.from_user.id, GAME_ID, "draw")
         else:
@@ -192,23 +211,24 @@ async def handle_answer(message: Message, state: FSMContext) -> None:
             await record_result(message.from_user.id, GAME_ID, "loss")
 
         await message.answer(
-            f"{text}\n\n{medal}\nСумма за {ROUNDS} раундов: <b>{total}</b>.",
+            f"{text}\n\n{medal}\nСчёт: <b>{score} / {ROUNDS}</b>.",
             reply_markup=next_round_kb(GAME_ID),
         )
         return
 
     # Следующий раунд
-    next_base = await ai_new_word(persona, used_base)
-    used_base.append(next_base)
+    pair = await ai_new_word(persona, used_words)
+    used_words.append(pair["word"])
 
     st["round"] = round_no + 1
-    st["total"] = total
-    st["base"] = next_base
-    st["used_base"] = used_base
+    st["score"] = score
+    st["word"] = pair["word"]
+    st["antonym"] = pair["antonym"]
+    st["used_words"] = used_words
     await set_session(message.from_user.id, GAME_ID, st)
 
     await message.answer(text, reply_markup=back_to_menu_kb())
     await message.answer(
-        header_text(persona, next_base, round_no + 1),
+        header_text(persona, pair["word"], round_no + 1),
         reply_markup=back_to_menu_kb(),
     )

@@ -50,3 +50,6 @@ GAMES_BY_ID["mine_number"].router = mine_router
 
 from games.antonyms import router as antonyms_router
 GAMES_BY_ID["antonyms"].router = antonyms_router
+
+from games.believe_or_not import router as believe_router
+GAMES_BY_ID["believe_or_not"].router = believe_router

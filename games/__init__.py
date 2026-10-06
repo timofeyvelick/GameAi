@@ -53,3 +53,21 @@ GAMES_BY_ID["antonyms"].router = antonyms_router
 
 from games.believe_or_not import router as believe_router
 GAMES_BY_ID["believe_or_not"].router = believe_router
+
+from games.emoji_movie import router as emoji_router
+GAMES_BY_ID["emoji_movie"].router = emoji_router
+
+from games.cities import router as cities_router
+GAMES_BY_ID["cities"].router = cities_router
+
+from games.guess_word import router as guess_router
+GAMES_BY_ID["guess_word"].router = guess_router
+
+from games.twenty_questions import router as tq_router
+GAMES_BY_ID["twenty_questions"].router = tq_router
+
+from games.who_am_i import router as whoami_router
+GAMES_BY_ID["who_am_i"].router = whoami_router
+
+from games.crossword import router as crossword_router
+GAMES_BY_ID["crossword"].router = crossword_router
